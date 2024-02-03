@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 
 import smtplib
+import sys
 from email.message import EmailMessage
+from sys import argv
 import mailbox
+from typing import List
+
 import gnupg
 from dotenv import load_dotenv
 from socket import gethostname
@@ -30,7 +34,11 @@ assert from_address
 assert to_address
 
 # Path to the mailbox file
-mailbox_path = '/var/mail/adam'
+try:
+    mailbox_path = argv[1]
+except IndexError:
+    print(f"Usage: {argv[0]} mailbox_path", file=sys.stderr)
+    exit(1)
 
 
 def forward_email(msg: mailbox.mboxMessage) -> bool:
@@ -44,48 +52,66 @@ def forward_email(msg: mailbox.mboxMessage) -> bool:
     encrypted_mail = gpg.encrypt(msg.as_bytes(), recipients=[to_address], always_trust=True, armor=True)
 
     if not encrypted_content.ok:
-        print(f"[!] encryption failed: {encrypted_content.status}")
+        print(f"[!] Encryption failed: {encrypted_content.status}", file=sys.stderr)
         return False
 
-    with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30) as server:
-        server.login(smtp_user, smtp_password)
+    try:
+        with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30) as server:
+            server.login(smtp_user, smtp_password)
 
-        # Create a new EmailMessage for forwarding, with encrypted content
-        forward_msg = EmailMessage()
-        forward_msg.set_content(str(encrypted_content))
+            # Create a new EmailMessage for forwarding, with encrypted content
+            forward_msg = EmailMessage()
+            forward_msg.set_content(str(encrypted_content))
 
-        forward_msg.add_attachment(
-            encrypted_mail.data,
-            filename="original_message.eml.asc",
-            maintype="application",
-            subtype="pgp-encrypted"
-        )
+            forward_msg.add_attachment(
+                encrypted_mail.data,
+                filename="original_message.eml.asc",
+                maintype="application",
+                subtype="pgp-encrypted"
+            )
 
-        # Set the headers for forwarding
-        forward_msg['Subject'] = f"[DEV] [{gethostname()}] {msg.get('subject', 'No Subject')}"
-        forward_msg['From'] = from_address
-        forward_msg['To'] = to_address
-        print('[*] forwarding', forward_msg['Subject'])
+            # Set the headers for forwarding
+            forward_msg['Subject'] = f"[DEV] [{gethostname()}] {msg.get('subject', 'No Subject')}"
+            forward_msg['From'] = from_address
+            forward_msg['To'] = to_address
+            print('[*] forwarding', forward_msg['Subject'])
 
-        # Send the email
-        server.send_message(forward_msg)
-        return True
+            # Send the email
+            server.send_message(forward_msg)
+            return True
+    except smtplib.SMTPException as e:
+        print(f'[!] SMTP error occurred: {e}', file=sys.stderr)
+        return False
 
 
 def main() -> int:
+    mbox = None
     try:
         # Open the mailbox
         mbox = mailbox.mbox(mailbox_path)
+        mbox.lock()  # Lock the mailbox to make changes
 
         # Iterate over all messages in the mailbox and forward them
-        for msg in mbox:
-            forward_email(msg)
+        to_remove: List[str] = []
+        for key, msg in mbox.iteritems():
+            if forward_email(msg):
+                to_remove.append(key)
+
+        for key in to_remove:
+            mbox.remove(key)  # Mark the message for deletion
+
+        mbox.flush()  # Commit changes and delete marked messages
     except FileNotFoundError:
-        print(f"The file {mailbox_path} does not exist.")
+        print(f"[!] The file {mailbox_path} does not exist.", file=sys.stderr)
         return 1
     except PermissionError:
-        print(f"Permission denied when trying to access {mailbox_path}.")
+        print(f"[!] Permission denied when trying to access {mailbox_path}.", file=sys.stderr)
         return 2
+    finally:
+        if mbox is not None:
+            mbox.unlock()
+
+    print("[*] Everything done")
     return 0
 
 
