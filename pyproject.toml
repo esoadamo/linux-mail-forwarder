@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "linux-mail-forwarder"
+version = "0.1.0"
+description = ""
+authors = ["Adam Hlaváček <git@adamhlavacek.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+python-gnupg = "^0.5.2"
+python-dotenv = "^1.0.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
