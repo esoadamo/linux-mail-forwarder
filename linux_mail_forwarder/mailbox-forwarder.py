@@ -5,12 +5,14 @@ import sys
 from email.message import EmailMessage
 from sys import argv
 import mailbox
-from typing import List
+from typing import List, Optional
+from tempfile import mkstemp
 
 import gnupg
 from dotenv import load_dotenv
 from socket import gethostname
 import os
+import shutil
 
 # Load environment variables from .env file
 load_dotenv()
@@ -74,7 +76,7 @@ def forward_email(msg: mailbox.mboxMessage) -> bool:
             forward_msg['Subject'] = f"[DEV] [{gethostname()}] {msg.get('subject', 'No Subject')}"
             forward_msg['From'] = from_address
             forward_msg['To'] = to_address
-            print('[*] forwarding', forward_msg['Subject'])
+            print('[*] Forwarding', forward_msg['Subject'])
 
             # Send the email
             server.send_message(forward_msg)
@@ -85,31 +87,39 @@ def forward_email(msg: mailbox.mboxMessage) -> bool:
 
 
 def main() -> int:
-    mbox = None
+    mbox: Optional[mailbox.mbox] = None
+    _, mbox_tmp_path = mkstemp()
     try:
         # Open the mailbox
         mbox = mailbox.mbox(mailbox_path)
         mbox.lock()  # Lock the mailbox to make changes
 
+        # Copy to temporary file as to overcome permission denied error
+        shutil.copy(mailbox_path, mbox_tmp_path)
+        mbox_tmp = mailbox.mbox(mbox_tmp_path)
+
         # Iterate over all messages in the mailbox and forward them
         to_remove: List[str] = []
-        for key, msg in mbox.iteritems():
+        for key, msg in mbox_tmp.iteritems():
             if forward_email(msg):
                 to_remove.append(key)
 
         for key in to_remove:
-            mbox.remove(key)  # Mark the message for deletion
+            mbox_tmp.remove(key)  # Mark the message for deletion
 
-        mbox.flush()  # Commit changes and delete marked messages
+        mbox_tmp.flush()  # Commit changes and delete marked messages
+        shutil.copy(mbox_tmp_path, mailbox_path)
     except FileNotFoundError:
         print(f"[!] The file {mailbox_path} does not exist.", file=sys.stderr)
         return 1
-    except PermissionError:
-        print(f"[!] Permission denied when trying to access {mailbox_path}.", file=sys.stderr)
+    except PermissionError as e:
+        print(f"[!] Permission denied when trying to access {mailbox_path} ({e}).", file=sys.stderr)
         return 2
     finally:
         if mbox is not None:
             mbox.unlock()
+        if os.path.exists(mbox_tmp_path):
+            os.unlink(mbox_tmp_path)
 
     print("[*] Everything done")
     return 0
