@@ -43,17 +43,34 @@ except IndexError:
     exit(1)
 
 
+def extract_first_payload(msg: mailbox.Message) -> str:
+    """
+    Recursively extracts the first payload from the message
+    :param msg: email message
+    :return: string payload
+    """
+    if msg.is_multipart():
+        return extract_first_payload(msg.get_payload(i=0))
+    return msg.get_payload()
+
+
 def forward_email(msg: mailbox.mboxMessage) -> bool:
     """
     Encrypt and forward the given email message using the SMTP server.
     """
+    payload = extract_first_payload(msg)
+
     # Encrypt the email content with the recipient's public key
     # noinspection PyTypeChecker
-    encrypted_content = gpg.encrypt(msg.get_payload(), recipients=[to_address], always_trust=True, armor=True)
+    encrypted_content = gpg.encrypt(payload, recipients=[to_address], always_trust=True, armor=True)
     # noinspection PyTypeChecker
     encrypted_mail = gpg.encrypt(msg.as_bytes(), recipients=[to_address], always_trust=True, armor=True)
 
     if not encrypted_content.ok:
+        print(f"[!] Encryption failed: {encrypted_content.status}", file=sys.stderr)
+        return False
+
+    if not encrypted_mail.ok:
         print(f"[!] Encryption failed: {encrypted_content.status}", file=sys.stderr)
         return False
 
@@ -72,8 +89,12 @@ def forward_email(msg: mailbox.mboxMessage) -> bool:
                 subtype="pgp-encrypted"
             )
 
+            subject_appendix = ""
+            if msg.is_multipart():
+                subject_appendix += " (multipart)"
+
             # Set the headers for forwarding
-            forward_msg['Subject'] = f"[DEV] [{gethostname()}] {msg.get('subject', 'No Subject')}"
+            forward_msg['Subject'] = f"[DEV] [{gethostname()}] {msg.get('subject', 'No Subject')}{subject_appendix}"
             forward_msg['From'] = from_address
             forward_msg['To'] = to_address
             print('[*] Forwarding', forward_msg['Subject'])
