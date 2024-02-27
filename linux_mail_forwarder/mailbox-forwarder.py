@@ -50,15 +50,15 @@ def extract_first_payload(msg: mailbox.Message) -> str:
     :return: string payload
     """
     if msg.is_multipart():
-        return extract_first_payload(msg.get_payload(i=0))
-    return msg.get_payload()
+        return extract_first_payload(msg.get_payload(i=0, decode=False))
+    return msg.get_payload(decode=False)
 
 
 def forward_email(msg: mailbox.mboxMessage) -> bool:
     """
     Encrypt and forward the given email message using the SMTP server.
     """
-    payload = extract_first_payload(msg)
+    payload = extract_first_payload(msg).encode('utf8')
 
     # Encrypt the email content with the recipient's public key
     # noinspection PyTypeChecker
